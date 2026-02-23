@@ -1,0 +1,92 @@
+[
+  {
+    "result": "Not Found",
+    "exact_match_id": null,
+    "matches": [
+      {
+        "id": "21",
+        "title": "Android:MDA Connect:Quick TV: App crashes when opening last reel",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Trending \u2192 Quick TV.\n3. Open Quick TV list.\n4. Tap the last reel.\nIssue: App crashes on opening the last reel.",
+        "score_pct": 56.895263204259486
+      },
+      {
+        "id": "8",
+        "title": "Android:MDA Connect:Info-In-Graphics: App crashes when downloading last card after View More",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Hamburger menu \u2192 Govt In Action \u2192 Info-In-Graphics.\n3. Scroll and tap View More.\n4. Scroll to end and open the last card.\n5. Tap Download.\nIssue: App crashes when downloading the last card.",
+        "score_pct": 56.86022652909237
+      },
+      {
+        "id": "11",
+        "title": "Android:MDA Connect:Info-In-Graphics: Downloading broken images crashes the app",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Hamburger menu \u2192 Govt In Action \u2192 Info-In-Graphics.\n3. Select filters (Elections/Empowering the Poor/Environment/India First).\n4. Open any broken image.\n5. Tap Download.\nIssue: Downloading a broken image causes app crash.",
+        "score_pct": 56.604159136279584
+      },
+      {
+        "id": "55",
+        "title": "Android:MDA Connect:Trending: \u201cNamo AI\u201d (AI tile) opens white screen",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Trending \u2192 horizontal scroll to AI tile.\n3. Tap AI tile.\nIssue: White screen appears instead of loading the AI section.",
+        "score_pct": 54.05859485334285
+      },
+      {
+        "id": "39",
+        "title": "Android:MDA Connect:Know the Leader: AI panel appears briefly then disappears",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Hamburger menu \u2192 Know the Leader (or similar).\nIssue: AI section appears briefly and disappears; user can\u2019t access it.",
+        "score_pct": 53.39227846649474
+      }
+    ],
+    "llm_confirmed_duplicate": false,
+    "llm_best_match_id": null,
+    "dedup_within_sheet": false,
+    "duplicate_of_row_index": null
+  },
+  {
+    "result": "Not Found",
+    "exact_match_id": null,
+    "matches": [
+      {
+        "id": "101",
+        "title": "Login button not working on Safari browser",
+        "module": "UI",
+        "repro_steps": "Open Safari 17 \u2192 Go to login page \u2192 Enter credentials \u2192 Click login \u2192 Button does not trigger API",
+        "score_pct": 64.18260925513255
+      },
+      {
+        "id": "17",
+        "title": "Android:MDA Connect:Login: Google sign-in not working",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. Tap Login.\n3. Select Continue with Google.\n4. Complete Google auth.\nIssue: Google login fails (user not signed in).",
+        "score_pct": 54.570287097059065
+      },
+      {
+        "id": "27",
+        "title": "Kio DAM: Wrong error shown when logging into disabled department (\u201cundefined Please try again!\u201d)",
+        "module": "Kio DAM",
+        "repro_steps": "1. Open Kio DAM.\n2. Enter an email onboarded in multiple departments but disabled in one.\n3. Select the disabled department.\nIssue: Wrong error popup \u201cundefined Please try again!\u201d and user is redirected.",
+        "score_pct": 53.952662964295584
+      },
+      {
+        "id": "63",
+        "title": "Android:MDA Connect:Home: Seva Parva banner \u201cOpen\u201d button does nothing",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app.\n2. On Home, find Seva Parva banner.\n3. Tap Open.\nIssue: Banner action does not open the intended section.",
+        "score_pct": 52.30123564314777
+      },
+      {
+        "id": "74",
+        "title": "Android:MDA Connect:Merchandise: Login gate inconsistent between Home banner and menu navigation",
+        "module": "MDA Connect",
+        "repro_steps": "1. Open the MDA Connect app without login.\n2. Tap \u201cBook Collection\u201d banner on Home (prompts login).\n3. Open Hamburger \u2192 Get Involved \u2192 Merchandise \u2192 Book.\nIssue: Same page is accessible without login via menu, but not via banner.",
+        "score_pct": 52.021410071829386
+      }
+    ],
+    "llm_confirmed_duplicate": false,
+    "llm_best_match_id": null,
+    "dedup_within_sheet": false,
+    "duplicate_of_row_index": null
+  }
+]

@@ -1,0 +1,12 @@
+[
+  {
+    "timestamp_utc": "2026-02-19T09:26:31.265678+00:00",
+    "file_name": "issues.csv",
+    "issues_added": 100
+  },
+  {
+    "timestamp_utc": "2026-02-19T11:04:23.210158+00:00",
+    "file_name": "json_upload",
+    "issues_added": 2
+  }
+]
