@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator, ConfigDict, field_validator
 from typing import List, Optional
 
 
@@ -27,6 +27,7 @@ class CandidateMatch(BaseModel):
 
 
 class RowDecision(BaseModel):
+    model_config = ConfigDict(strict=False)
     input_id: Optional[str] = None
     result: str
     exact_match_id: Optional[str] = None

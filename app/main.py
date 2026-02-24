@@ -2,7 +2,7 @@ from fastapi import HTTPException
 import requests
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api import routes_vector_store, routes_dedupe, json_store_routes
+from app.api import routes_vector_store, routes_dedupe
 from app.core.logging import logger
 
 app = FastAPI(title="Bug Deduplication API", version="1.0.0")
