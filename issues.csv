@@ -1,0 +1,11 @@
+ID,Work Item Type,Title,Repro Steps,Module,State
+1,Bug,Android:MDA Connect:Speeches: Embedded YouTube video shows “Error 153: Video player configuration error”,"1. Open the MDA Connect app.
+2. Tap the Hamburger menu.
+3. Go to MDA Exclusive → Speeches.
+4. Open any speech.
+Issue: The embedded YouTube video shows “Error 153: Video player configuration error”.",MDA Connect,Fixed
+2,Task,Android:MDA Connect:Volunteer:Downloads: No content shown when opening a download (content visible after file download),"1. Open the MDA Connect app.
+2. Navigate to Volunteer tab.
+3. Tap Downloads.
+4. Open any download item.
+Issue: No content is displayed inside the app when opening a download, but content appears after downloading the file.",MDA Connect,Fixed

@@ -34,7 +34,8 @@ class LLMService:
     def __init__(self):
         base_embeddings = GoogleGenerativeAIEmbeddings(
             model=EMBEDDING_MODEL,
-            google_api_key=settings.GOOGLE_API_KEY
+            google_api_key=settings.GOOGLE_API_KEY,
+            output_dimensionality=3072
         )
         self.embeddings = RateLimitedEmbeddings(base_embeddings, delay=0.7)
         self.bytez_client = Bytez(settings.BYTEZ_API_KEY)

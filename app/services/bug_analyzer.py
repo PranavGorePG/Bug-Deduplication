@@ -12,7 +12,7 @@ class BugAnalyzer:
         self.llm_service = LLMService()
         self.vector_store_service = VectorStoreService()
 
-    def analyze_sheet(self, rows: List[Dict], input_ids: List[str] = None) -> List[RowDecision]:
+    def analyze_sheet(self, rows: List[Dict], input_ids: List[str] = None, collection_name: str = None) -> List[RowDecision]:
         # rows is list of dicts with keys: Title, Repro Steps, Module, etc.
 
         # 1. Precompute embeddings for in-sheet dedupe
@@ -33,16 +33,16 @@ class BugAnalyzer:
             valid_indices.append(i)
 
         embeddings = []
-        print(
-            f"✅ Embeddings shape: {len(embeddings)} texts, matrix {embedding_matrix.shape if 'embedding_matrix' in locals() else 'N/A'}")
+
         print(f"Valid indices: {valid_indices}")
 
         if texts_to_embed:
-            print(f"Norm check: {norm[:2] if 'norm' in locals() else 'OK'}")
+            # print(f"Norm check: {norm[:2] if 'norm' in locals() else 'OK'}")
             # Batch embed
             # GoogleGenerativeAIEmbeddings.embed_documents
             embeddings = self.llm_service.embeddings.embed_documents(
                 texts_to_embed)
+        # print(f"✅ Embeddings shape: {len(embeddings)} texts, matrix {embedding_matrix.shape if 'embedding_matrix' in locals() else 'N/A'}")
 
         # Convert to numpy array for fast cosine similarity
         embedding_matrix = np.array(embeddings)
@@ -109,10 +109,10 @@ class BugAnalyzer:
 
             # --- Cross-store Deduplication ---
             query_text = f"{title}\n{str(row.get('Repro Steps', '')).strip()}"
-            print(f"Querying store for row {i}: {query_text[:50]}...")
-            candidates = self.vector_store_service.search(query_text, top_k=5)
-            print(
-                f"Found {len(candidates)} candidates, best score: {candidates[0].score_pct if candidates else 'NONE'}")
+            # print(f"Querying store for row {i}: {query_text[:50]}...")
+            candidates = self.vector_store_service.search(
+                query_text, top_k=5, collection_name=collection_name)
+            # print(f"Found {len(candidates)} candidates, best score: {candidates[0].score_pct if candidates else 'NONE'}")
 
             if not candidates:
                 decisions[i] = RowDecision(

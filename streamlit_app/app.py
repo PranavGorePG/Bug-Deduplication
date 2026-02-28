@@ -2,187 +2,198 @@ import streamlit as st
 import requests
 import pandas as pd
 from io import BytesIO
+import json
 
-# Configuration
 API_URL = "http://127.0.0.1:8000"
 
-st.set_page_config(page_title="Bug Deduplication App", layout="wide")
+st.set_page_config(page_title="Bug Deduplication App",
+                   layout="wide", page_icon="🐞")
 
-st.title("🐞 Bug Deduplication App")
+st.title("🐞 Bug Deduplication App - Qdrant Multi-Collection")
 
-# --- Sidebar: Navigation ---
-page = st.sidebar.radio(
-    "Navigation", ["Vector Store Management", "Dedup New Issues"])
+# --- API Helper ---
 
 
-def get_status():
+@st.cache_data(ttl=30)
+def get_all_collections():
     try:
-        response = requests.get(f"{API_URL}/vector-store/status")
+        response = requests.get(f"{API_URL}/vector-store/collections")
         if response.status_code == 200:
             return response.json()
+        return []
     except:
+        return []
+
+
+def api_call(endpoint, method="GET", data=None, files=None):
+    try:
+        if method == "GET":
+            response = requests.get(f"{API_URL}{endpoint}")
+        elif method == "POST":
+            if files:
+                response = requests.post(f"{API_URL}{endpoint}", files=files)
+            else:
+                response = requests.post(f"{API_URL}{endpoint}", json=data)
+        elif method == "DELETE":
+            response = requests.delete(f"{API_URL}{endpoint}")
+
+        if response.status_code in [200, 201]:
+            return response.json()
+        st.error(f"API {response.status_code}: {response.text}")
         return None
-    return None
+    except Exception as e:
+        st.error(f"Connection error: {e}")
+        return None
 
 
-# --- Page: Vector Store Management ---
-if page == "Vector Store Management":
-    st.header("Vector Store Management")
+def safe_status(product: str):
+    """Safe status with fallback"""
+    status = api_call(f"/vector-store/collection/{product}/status")
+    return status or {"total_issues": 0, "index_built": False, "collection_name": product}
 
-    # Status
-    status = get_status()
-    if status:
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Issues", status["total_issues"])
-        c2.metric("Upload Events", status["upload_events"])
-        c3.write(f"**Index Built:** {status['index_built']}")
-        c4.write(f"**Last Updated (UTC):**\n{status['last_updated_utc']}")
-    else:
-        st.error("Backend API is not reachable.")
 
-    st.divider()
+# --- Sidebar ---
+st.sidebar.title("⚙️ Product")
+collections = get_all_collections()
+if collections:
+    product_name = st.sidebar.selectbox(
+        "Select Collection",
+        [c['name'] for c in collections]
+    )
+else:
+    product_name = st.sidebar.text_input(
+        "Product Name", value="android_mda_connect")
 
-    # Reset Store
-    col1, col2 = st.columns([1, 5])
-    if col1.button("Reset Store", type="primary"):
-        try:
-            res = requests.post(f"{API_URL}/vector-store/reset")
-            if res.status_code == 200:
-                st.success("Vector store reset successfully!")
+page = st.sidebar.radio(
+    "Navigation", ["📊 Collections", "📈 Append Issues", "🔍 Dedup New"])
+
+# --- Collections ---
+if page == "📊 Collections":
+    st.header("🗂️ Manage Collections")
+
+    collections = get_all_collections()
+    if not collections:
+        st.info("👆 Create first collection in Append Issues tab")
+        st.stop()
+
+    # Table
+    df = pd.DataFrame(collections)
+    st.dataframe(df, use_container_width=True)
+
+    # Actions
+    col1, col2 = st.columns(2)
+    with col1:
+        new_coll = st.text_input("New Collection")
+        if st.button("➕ Create") and new_coll:
+            result = api_call(
+                f"/vector-store/collection/create?product_name={new_coll}", "POST")
+            if result:
+                st.success(f"✅ {new_coll} created!")
                 st.rerun()
-            else:
-                st.error("Failed to reset store.")
-        except Exception as e:
-            st.error(f"Error: {e}")
 
-    st.divider()
+    with col2:
+        del_coll = st.selectbox(
+            "Delete", [""] + [c['name'] for c in collections])
+        if st.button("🗑️ Delete") and del_coll:
+            result = api_call(f"/vector-store/collection/{del_coll}", "DELETE")
+            if result:
+                st.success(f"✅ {del_coll} deleted!")
+                st.rerun()
 
-    # Upload Issues
-    st.subheader("Append Existing Issues to Store")
-    uploaded_file = st.file_uploader(
-        "Upload CSV or Excel (Already Reported Issues)", type=["csv", "xlsx", "xls"])
+# --- Append Issues ---
+elif page == "📈 Append Issues":
+    st.header(f"📦 Append to **{product_name}**")
 
-    if uploaded_file:
-        if st.button("Append Issues"):
-            with st.spinner("Parsing and appending..."):
+    status = safe_status(product_name)
+    col1, col2 = st.columns(2)
+    col1.metric("Current Issues", status["total_issues"])
+    col2.metric("Ready", "✅" if status["index_built"] else "⚠️")
+
+    tab1, tab2 = st.tabs(["📁 File", "📄 JSON"])
+
+    with tab1:
+        uploaded = st.file_uploader(
+            "Reference Issues CSV/Excel", ["csv", "xlsx"])
+        if uploaded and st.button("➕ Append", type="primary"):
+            with st.spinner("Uploading..."):
                 files = {
-                    "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                try:
-                    response = requests.post(
-                        f"{API_URL}/vector-store/append", files=files)
-                    if response.status_code == 200:
-                        data = response.json()
-                        st.success(
-                            f"Successfully added {data['issues_added']} new issues!")
-                        st.json(data)
+                    "file": (uploaded.name, uploaded.getvalue(), uploaded.type)}
+                result = api_call("/vector-store/append", "POST", files=files)
+                if result:
+                    st.success(f"✅ +{result['issues_added']} issues!")
+                    st.rerun()
+
+    with tab2:
+        json_str = st.text_area("JSON Issues", height=200)
+        if st.button("➕ Append JSON"):
+            try:
+                data = json.loads(json_str)
+                result = api_call("/vector-store/append-json", "POST", data)
+                if result:
+                    st.success(f"✅ +{result['issues_added']}!")
+                    st.rerun()
+            except:
+                st.error("Invalid JSON")
+
+# --- Dedup ---
+elif page == "🔍 Dedup New":
+    st.header(f"🎯 Dedup vs **{product_name}**")
+
+    status = safe_status(product_name)
+    if status["total_issues"] == 0:
+        st.warning("⚠️ No reference issues. Append first!")
+        st.stop()
+
+    st.info(f"**Matching against {status['total_issues']} reference issues**")
+
+    tab1, tab2 = st.tabs(["Excel", "JSON"])
+
+    with tab1:
+        uploaded = st.file_uploader("New Issues Excel", ["xlsx"])
+        if uploaded:
+            if st.button("🚀 Process", type="primary"):
+                with st.spinner("Analysis..."):
+                    files = {"file": uploaded.getvalue()}
+                    resp = requests.post(
+                        f"{API_URL}/process-excel?product_name={product_name}",
+                        files=files
+                    )
+                    if resp.status_code == 200:
+                        st.success("✅ Done!")
+                        st.download_button(
+                            "💾 Download",
+                            resp.content,
+                            f"deduped_{product_name}_{uploaded.name}",
+                            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
                     else:
-                        st.error(f"Error: {response.text}")
-                except Exception as e:
-                    st.error(f"Connection Error: {e}")
+                        st.error(resp.text)
 
-# --- Page: Dedup New Issues ---
-elif page == "Dedup New Issues":
-    st.header("Deduplicate New Issues")
+    with tab2:
+        # JSON Builder
+        bugs = []
+        for i in range(3):
+            with st.expander(f"New Bug #{i+1}"):
+                bug_id = st.text_input("ID", key=f"id{i}")
+                title = st.text_input("Title", key=f"t{i}")
+                steps = st.text_area("Steps", height=80, key=f"s{i}")
+                mod = st.text_input("Module", key=f"m{i}")
+                if title and steps:
+                    bugs.append({"id": bug_id or f"NEW_{i}", "product": product_name,
+                                "title": title, "repro_steps": steps, "module": mod})
 
-    status = get_status()
-    if not status or not status["index_built"] or status["total_issues"] == 0:
-        st.warning(
-            "⚠️ Vector store is empty. Please go to 'Vector Store Management' and upload existing issues first.")
-
-    uploaded_file = st.file_uploader("Upload New Issues Excel", type=["xlsx"])
-
-    if "processed_df" not in st.session_state:
-        st.session_state.processed_data = None
-        st.session_state.processed_filename = None
-
-    if uploaded_file:
-        if st.button("Process & Deduplicate"):
-            with st.spinner("Processing... This may take a while (Embeddings + LLM Judge)..."):
-                files = {
-                    "file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
-                try:
-                    response = requests.post(
-                        f"{API_URL}/process-excel", files=files)
-
-                    if response.status_code == 200:
-                        st.success("Processing complete!")
-
-                        # Store in session state
-                        content = response.content
-                        df = pd.read_excel(BytesIO(content))
-                        st.session_state.processed_df = df
-                        st.session_state.processed_data = content
-                        st.session_state.processed_filename = f"processed_{uploaded_file.name}"
-
-                    else:
-                        st.error(f"Error: {response.text}")
-
-                except Exception as e:
-                    st.error(f"Connection Error: {e}")
-
-    # Display Results & Download
-    if "processed_df" in st.session_state and st.session_state.processed_df is not None:
-        df = st.session_state.processed_df
-
-        st.divider()
-        st.subheader("Results")
-
-        # Download Button
-        st.download_button(
-            label="Download Processed Excel",
-            data=st.session_state.processed_data,
-            file_name=st.session_state.processed_filename,
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="primary"
-        )
-
-        # Stats
-        if "Result" in df.columns:
-            st.write("### Statistics")
-            counts = df["Result"].apply(lambda x: x.split(
-                ":")[0] if isinstance(x, str) else str(x)).value_counts()
-            st.bar_chart(counts)
-
-            # Comparison UI
-            st.write("### Review Matches")
-
-            # Filter rows with matches (Exact or Similar)
-            # Result contains "Exact found" or "Similar Found"
-            match_mask = df["Result"].astype(str).str.contains(
-                "Exact found|Similar Found", case=False, na=False)
-            match_df = df[match_mask].copy()
-
-            if not match_df.empty:
-                st.info(
-                    f"Found {len(match_df)} issues with potential matches in the store.")
-
-                # Iterate and show comparison
-                for idx, row in match_df.iterrows():
-                    with st.expander(f"Row {idx+2}: {row.get('Title', 'No Title')}"):
-                        col_left, col_right = st.columns(2)
-
-                        with col_left:
-                            st.markdown("#### New Issue")
-                            st.write(f"**Module:** {row.get('Module', 'N/A')}")
-                            st.write(f"**Title:** {row.get('Title', 'N/A')}")
-                            st.text_area("Repro Steps", value=str(
-                                row.get('Repro Steps', '')), height=150, disabled=True, key=f"repro_{idx}")
-
-                        with col_right:
-                            st.markdown("#### Top Matches")
-                            matches_str = str(row.get("Matching IDs", ""))
-                            st.code(matches_str)
-                            st.write(
-                                f"**Confidence:** {row.get('Match Confidence', 'N/A')}")
-                            st.write(f"**Result:** {row.get('Result', 'N/A')}")
-
-                        # Ideally we would fetch the full details of the matched ID here from the API
-                        # but we don't have an endpoint to get issue by ID yet and logic asks to show 5 matches.
-                        # The "Matching IDs" column only has ID and Score.
-                        # The prompt says: "Right: selected matched issue (Module, Title, description/Repro Steps)."
-                        # TO do this, we need the frontend to be able to fetch details of the matched ID.
-                        # I'll add a note that we display what we have.
+        if bugs and st.button("🔍 Analyze", type="primary"):
+            payload = {"product_name": product_name, "bug_reports": bugs}
+            resp = requests.post(f"{API_URL}/process-json", json=payload)
+            if resp.status_code == 200:
+                results = resp.json()
+                st.success(f"✅ {len(results)} analyzed!")
+                df = pd.json_normalize(results)
+                st.dataframe(df)
+                st.download_button("💾 JSON", json.dumps(
+                    results, indent=2), f"results_{product_name}.json")
             else:
-                st.info("No cross-store matches found to review.")
-        else:
-            st.warning("Result column not found in processed file.")
+                st.error(resp.text)
+
+st.markdown("---")
+st.caption("FastAPI + Qdrant | v2.12.5")

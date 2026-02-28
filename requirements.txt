@@ -12,3 +12,5 @@ python-dotenv
 numpy<2.0
 bytez
 qdrant-client
+langchain-qdrant
+

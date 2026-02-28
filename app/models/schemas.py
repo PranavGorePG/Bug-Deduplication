@@ -4,6 +4,7 @@ from typing import List, Optional
 
 class Issue(BaseModel):
     id: str
+    product: Optional[str] = None
     work_item_type: Optional[str] = None
     title: str
     repro_steps: str
@@ -13,6 +14,7 @@ class Issue(BaseModel):
 
 class BugReportInput(BaseModel):
     id: Optional[int | str] = None
+    # product: str
     title: str
     repro_steps: str
     module: Optional[str] = None
@@ -39,6 +41,7 @@ class RowDecision(BaseModel):
 
 
 class VectorStoreStatus(BaseModel):
+    collection_name: str
     index_built: bool
     total_issues: int
     last_updated_utc: str
@@ -58,3 +61,9 @@ class JsonIssue(BaseModel):
     module: Optional[str] = None
     source: str = "json_api"
     work_item_type: Optional[str] = None
+
+
+class ProcessRequest(BaseModel):
+    model_config = ConfigDict(strict=False)
+    product_name: str
+    bug_reports: List[BugReportInput]

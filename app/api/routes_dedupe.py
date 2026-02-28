@@ -1,55 +1,74 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from app.services.vector_store_service import VectorStoreService
 from app.services.bug_analyzer import BugAnalyzer
 from app.repositories.excel_repository import ExcelRepository
-from app.models.schemas import RowDecision, BugReportInput
+from app.models.schemas import RowDecision, BugReportInput, ProcessRequest
 from typing import List
 import pandas as pd
 from io import BytesIO
+from app.core.logging import logger
 
 router = APIRouter(tags=["Deduplication"])
+# vector_store_service = VectorStoreService()
+# bug_analyzer = BugAnalyzer()
+
 vector_store_service = VectorStoreService()
 bug_analyzer = BugAnalyzer()
+bug_analyzer.vector_store_service = vector_store_service
+
+
 excel_repository = ExcelRepository()
 
 
 @router.post("/process-excel")
-async def process_excel(file: UploadFile = File(...)):
-    # Check if index is built and non-empty
-    status = vector_store_service.get_status()
-    if not status.index_built or status.total_issues == 0:
-        raise HTTPException(
-            status_code=400, detail="Vector store is empty. Please upload existing issues first.")
-
+async def process_excel(
+    file: UploadFile = File(...),
+    product_name: str = Query(..., description="Product collection name")
+):
+    """Process new Excel bugs against product collection"""
     try:
+        # Set product collection
+        vector_store_service.set_collection(product_name)
+        status = vector_store_service.get_collection_status(
+            vector_store_service.default_collection)
+
+        if not status.index_built or status.total_issues == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Collection '{product_name}' empty. Upload reference bugs first."
+            )
+
         # Read Excel
         contents = await file.read()
         file_obj = BytesIO(contents)
         df = excel_repository.read_excel(file_obj)
 
-        # Validate required columns
+        # Validate columns
         required = ["Title", "Repro Steps"]
         missing = [col for col in required if col not in df.columns]
         if missing:
             raise HTTPException(
-                status_code=400, detail=f"Missing required columns in Excel: {missing}")
+                status_code=400,
+                detail=f"Missing columns: {missing}"
+            )
 
-        # Convert DF to list of dicts for BugAnalyzer
-        # Replace NaN with empty string
+        # Convert to dicts (add product)
         rows = df.fillna("").to_dict(orient="records")
+        for row in rows:
+            row["product"] = product_name
 
-        # Analyze
+        logger.info(f"Processing {len(rows)} Excel rows for {product_name}")
+
+        # Analyze against product collection
         decisions = bug_analyzer.analyze_sheet(rows)
 
-        # Prepare results for Excel appending
+        # Prepare Excel results
         results_for_excel = []
         for d in decisions:
-            # Result string
             result_str = d.result
-
-            # Matching IDs
             matches_str = "NA"
+
             if d.matches:
                 lines = []
                 for m in d.matches:
@@ -59,16 +78,11 @@ async def process_excel(file: UploadFile = File(...)):
                         f"{m.id} ({m.score_pct:.1f}%) | {repro_preview}")
                 matches_str = "\\n".join(lines)
 
-            # Match Confidence
             confidence = "NA"
             if "Exact found" in d.result:
                 confidence = "High"
             elif "Similar Found" in d.result:
                 confidence = "Medium"
-            elif "Appended above" in d.result:
-                confidence = "NA"  # As per requirement "Not Found or in-sheet duplicate -> NA"
-            elif "Not Found" in d.result:
-                confidence = "NA"
 
             results_for_excel.append({
                 "result": result_str,
@@ -76,15 +90,12 @@ async def process_excel(file: UploadFile = File(...)):
                 "match_confidence": confidence
             })
 
-        # Append to Excel
-        # Reset file pointer for reading again (or we could pass the df but repository expects file content to preserve formatting)
-        # Actually Repository implementation loads workbook from binary content.
-        # We need original content. 'contents' variable has it.
+        # Append results to Excel
         file_obj_orig = BytesIO(contents)
         output_io = excel_repository.append_results_to_excel(
             file_obj_orig, results_for_excel)
 
-        filename = f"processed_{file.filename}"
+        filename = f"processed_{product_name}_{file.filename}"
 
         return StreamingResponse(
             output_io,
@@ -95,40 +106,59 @@ async def process_excel(file: UploadFile = File(...)):
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"Excel process error: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Internal Server Error: {str(e)}")
+            status_code=500, detail=f"Processing failed: {str(e)}")
 
 
 @router.post("/process-json", response_model=List[RowDecision])
-async def process_json(bug_reports: List[BugReportInput]):
-    # Check if index is built and non-empty
-    status = vector_store_service.get_status()
-    if not status.index_built or status.total_issues == 0:
-        raise HTTPException(
-            status_code=400, detail="Vector store is empty. Please upload existing issues first.")
+async def process_json(request: ProcessRequest):
+    """Process JSON bugs against product collection"""
+    product_name = request.product_name
+    bug_reports = request.bug_reports
 
     try:
-        # Convert Pydantic models to list of dicts for BugAnalyzer
-        # BugAnalyzer expects keys: "Title", "Repro Steps", "Module" (optional)
+        # Set collection + validate
+        vector_store_service.set_collection(product_name)
+        status = vector_store_service.get_collection_status(
+            vector_store_service.default_collection)
+
+        if not status.index_built or status.total_issues == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Collection '{product_name}' empty. Upload reference bugs first."
+            )
+
+        # Prepare rows with product
         rows = []
         input_ids = []
-        for report in bug_reports:
+        for i, report in enumerate(bug_reports):
             row = {
                 "Title": report.title,
                 "Repro Steps": report.repro_steps,
-                "Module": report.module
+                "Module": getattr(report, 'module', None) or "",
+                "product": product_name  # ✅ For BugAnalyzer
             }
             rows.append(row)
-            input_ids.append(str(report.id) if hasattr(
-                report, 'id') else str(len(rows)))
+            input_ids.append(str(getattr(report, 'id', i)))
+
+        logger.info(f"Processing {len(rows)} JSON bugs for {product_name}")
+        print(f"Processing {len(rows)} JSON bugs for {product_name}")
 
         # Analyze
-        decisions = bug_analyzer.analyze_sheet(rows, input_ids=input_ids)
+        decisions = bug_analyzer.analyze_sheet(
+            rows, input_ids=input_ids, collection_name=product_name)
+
+        logger.info(
+            f"✅ Analysis complete for {product_name}: {len(decisions)} decisions")
+        print(
+            f"✅ Analysis complete for {product_name}: {len(decisions)} decisions")
 
         return decisions
 
     except HTTPException:
         raise
     except Exception as e:
+        logger.error(f"JSON process error: {e}")
         raise HTTPException(
-            status_code=500, detail=f"Internal Server Error: {str(e)}")
+            status_code=500, detail=f"Analysis failed: {str(e)}")

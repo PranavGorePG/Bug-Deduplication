@@ -1,239 +1,221 @@
 import os
-import json
-import shutil
+from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
-from typing import List, Dict, Optional
-from langchain_community.vectorstores import FAISS
-from langchain_community.docstore.in_memory import InMemoryDocstore
+from qdrant_client import QdrantClient
+from qdrant_client.http.models import Distance, VectorParams
+from langchain_qdrant import Qdrant
 from langchain_core.documents import Document
-import faiss
 from app.core.config import settings
-from app.core.constants import FAISS_INDEX_PATH, VECTOR_STORE_STATUS_PATH, VECTOR_STORE_UPLOADS_PATH
 from app.services.llm_service import LLMService
-from app.models.schemas import Issue, VectorStoreStatus, CandidateMatch, UploadEvent
+from app.models.schemas import Issue, CandidateMatch, VectorStoreStatus
+from app.core.logging import logger
 
 
 class VectorStoreService:
     def __init__(self):
         self.llm_service = LLMService()
         self.embeddings = self.llm_service.get_embeddings()
-        self.vector_store = None
-        self.load_or_init_index()
-
-    # def load_or_init_index(self):
-    #     if os.path.exists(FAISS_INDEX_PATH) and os.path.exists(os.path.join(FAISS_INDEX_PATH, "index.faiss")):
-    #         try:
-    #             self.vector_store = FAISS.load_local(FAISS_INDEX_PATH, self.embeddings, allow_dangerous_deserialization=True)
-    #         except Exception as e:
-    #             print(f"Error loading FAISS index: {e}. Recreating empty index.")
-    #             self._create_empty_index()
-    #     else:
-    #         self._create_empty_index()
-
-    # def _create_empty_index(self):
-    #     # dimension 768 for text-embedding-001
-    #     index = faiss.IndexFlatL2(768)
-    #     self.vector_store = FAISS(
-    #         embedding_function=self.embeddings,
-    #         index=index,
-    #         docstore=InMemoryDocstore(),
-    #         index_to_docstore_id={}
-    #     )
-    def load_or_init_index(self):
-        if os.path.exists(FAISS_INDEX_PATH) and os.path.exists(os.path.join(FAISS_INDEX_PATH, "index.faiss")):
-            try:
-                self.vector_store = FAISS.load_local(
-                    FAISS_INDEX_PATH,
-                    embeddings=self.embeddings,  # ✅ Keep "embeddings" for load_local
-                    allow_dangerous_deserialization=True
-                )
-                # print(
-                #     f"✅ Loaded FAISS with dim {self.embeddings.embed_query('test')[:5]}...")
-            except Exception as e:
-                print(f"Error loading: {e}. Creating new.")
-                self._create_empty_index()
-        else:
-            self._create_empty_index()
-
-    def _create_empty_index(self):
-        # Dynamic dimension ✅
-        test_embedding = self.embeddings.embed_query("test")
-        d = len(test_embedding)
-        print(f"✅ Embedding dim: {d}")
-
-        index = faiss.IndexFlatL2(d)
-        self.vector_store = FAISS(
-            embedding_function=self.embeddings,  # ✅ "embedding_function" not "embeddings"
-            index=index,
-            docstore=InMemoryDocstore({}),       # ✅ Empty dict
-            index_to_docstore_id={}
+        self.client = QdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY,
+            timeout=60
         )
+        self.default_collection: Optional[str] = None
 
-    def append_issues(self, issues: List[Issue]) -> int:
-        # Load existing IDs to avoid exact duplicates
-        # Ideally this should be more efficient but for now we trust the vector store logic or just add all
-        # The prompt says: "Do not insert duplicates by ID: Maintain or retrieve a mapping of existing IDs"
+    def normalize_collection_name(self, product_name: str) -> str:
+        return product_name.lower().replace(" ", "_").replace("-", "_")
 
-        # We can reconstruct existing IDs from the docstore
+    def collection_exists(self, collection_name: str) -> bool:
+        """✅ FIXED: Check collections list"""
+        try:
+            collections = self.client.get_collections().collections
+            return any(c.name == collection_name for c in collections)
+        except:
+            return False
 
-        existing_ids = set()
+    def set_collection(self, product_name: str):
+        self.default_collection = self.normalize_collection_name(product_name)
+        logger.info(f"Active collection: {self.default_collection}")
 
-        if self.vector_store.docstore._dict:
-            for doc in self.vector_store.docstore._dict.values():
-                if 'id' in doc.metadata:
-                    existing_ids.add(str(doc.metadata['id']))
+    def create_collection(self, product_name: str) -> str:
+        collection_name = self.normalize_collection_name(product_name)
 
-        texts = []
-        metadatas = []
-        added_count = 0
+        if self.collection_exists(collection_name):
+            logger.info(f"Collection exists: {collection_name}")
+            return collection_name
 
-        for issue in issues:
-            issue_id = str(issue.id)
-            if issue_id in existing_ids:
-                continue
-
-            text = f"Module: {issue.module or ''}\nTitle: {issue.title}\nSteps: {issue.repro_steps or ''}"
-
-            metadata = {
-                'id': issue_id,
-                'title': issue.title,
-                'module': issue.module,
-                'work_item_type': getattr(issue, 'work_item_type', None),
-                'repro_steps': issue.repro_steps
-            }
-            texts.append(text)
-            metadatas.append(metadata)
-            added_count += 1
-
-        # print("texts******************************", texts)
-        # print("metadatas-----------------------------------------------", metadatas)
-
-        if texts:
-            print(f"Adding {len(texts)} new docs")
-            # ✅ SAFER: add_texts handles embedding + FAISS internally
-            self.vector_store.add_texts(
-                texts=texts,
-                metadatas=metadatas
+        test_emb = self.embeddings.embed_query("test")
+        self.client.create_collection(
+            collection_name=collection_name,
+            vectors_config=VectorParams(
+                size=len(test_emb),
+                distance=Distance.COSINE
             )
-            self.vector_store.save_local(FAISS_INDEX_PATH)
-            print("✅ Saved!")
-        return added_count
+        )
+        logger.info(f"✅ Created: {collection_name}")
+        return collection_name
 
-    def search(self, query_text: str, top_k: int = 5) -> List[CandidateMatch]:
-        if not self.vector_store:
-            return []
+    def delete_collection(self, product_name: str):
+        collection_name = self.normalize_collection_name(product_name)
+        if self.collection_exists(collection_name):
+            self.client.delete_collection(collection_name)
+            logger.info(f"🗑️ Deleted: {collection_name}")
+        else:
+            logger.warning(f"Collection not found: {collection_name}")
 
-        results = self.vector_store.similarity_search_with_relevance_scores(
-            query_text, k=top_k)
-
-        candidates = []
-        # print("Search results:", results)
-        for doc, score in results:
-            # Extract repro_steps from document content (format: "Module:...\nTitle:...\nSteps:...")
-            # repro_steps = ""
-            # content_lines = doc.page_content.split('\n')
-            # for line in content_lines:
-            #     if line.startswith("Steps:"):
-            #         repro_steps = line[6:].strip()  # Remove "Steps:" prefix
-            #         break
-            # print("doc.metadata", doc.metadata.get('repro_steps', 'N/A'))
-
-            candidate = CandidateMatch(
-                id=str(doc.metadata.get('id', 'unknown')),
-                title=doc.metadata.get('title', ''),
-                module=doc.metadata.get('module'),
-                repro_steps=doc.metadata.get('repro_steps', ''),
-                # repro_steps=repro_steps,  # Add repro_steps
-                score_pct=score * 100.0
-            )
-            candidates.append(candidate)
-
-        return candidates
-
-    # def search(self, query_text: str, top_k: int = 5) -> List[CandidateMatch]:
-    #     if not self.vector_store:
-    #         return []
-
-    #     # FAISS similarity_search_with_score returns L2 distance by default for IndexFlatL2
-    #     # But LangChain's current FAISS implementation with default normalization usually returns cosine distance or similar if normalized
-    #     # Wait, text-embedding-001 is usually normalized?
-    #     # Actually LangChain FAISS wrapper usually does L2 distance search.
-    #     # However, for simplicity and since we need a score_pct, we can use similarity_search_with_relevance_scores
-    #     # which usually attempts to return 0-1 score.
-    #     # For FAISS L2, lower is better. relevance score = 1 / (1 + distance).
-
-    #     results = self.vector_store.similarity_search_with_relevance_scores(
-    #         query_text, k=top_k)
-
-    #     candidates = []
-    #     for doc, score in results:
-    #         # score is 0..1
-    #         score_pct = score * 100.0
-    #         candidate = CandidateMatch(
-    #             id=str(doc.metadata.get('id', 'unknown')),
-    #             title=doc.metadata.get('title', ''),
-    #             module=doc.metadata.get('module'),
-    #             score_pct=score_pct
-    #         )
-    #         candidates.append(candidate)
-
-    #     return candidates
-
-    def get_status(self) -> VectorStoreStatus:
-        if not os.path.exists(VECTOR_STORE_STATUS_PATH):
+    def get_collection_status(self, collection_name: Optional[str] = None) -> VectorStoreStatus:
+        """✅ FIXED: Use collection_exists"""
+        coll = collection_name or self.default_collection
+        if not coll or not self.collection_exists(coll):
             return VectorStoreStatus(
+                collection_name=coll or "none",
                 index_built=False,
                 total_issues=0,
                 last_updated_utc="Never",
                 upload_events=0
             )
+
         try:
-            with open(VECTOR_STORE_STATUS_PATH, 'r') as f:
-                data = json.load(f)
-                return VectorStoreStatus(**data)
-        except:
+            count = self.client.count(collection_name=coll).count
             return VectorStoreStatus(
+                collection_name=coll,
+                index_built=True,
+                total_issues=count,
+                last_updated_utc=datetime.now(timezone.utc).isoformat(),
+                upload_events=1
+            )
+        except Exception as e:
+            logger.error(f"Status error for {coll}: {e}")
+            return VectorStoreStatus(
+                collection_name=coll,
                 index_built=False,
                 total_issues=0,
                 last_updated_utc="Error",
                 upload_events=0
             )
 
-    def record_upload(self, file_name: str, issues_added: int):
-        now_utc = datetime.now(timezone.utc).isoformat()
+    def append_issues(self, issues: List[Issue]) -> int:
+        if not self.default_collection:
+            raise ValueError("Call set_collection(product_name) first")
 
-        # Update status
-        status = self.get_status()
-        status.total_issues += issues_added
-        status.last_updated_utc = now_utc
-        status.upload_events += 1
-        status.index_built = True
+        docs = []
+        added_count = 0
 
-        with open(VECTOR_STORE_STATUS_PATH, 'w') as f:
-            json.dump(status.model_dump(), f, indent=2)
+        for issue in issues:
+            text = f"Product: {issue.product}\nTitle: {issue.title}\nModule: {issue.module or ''}\nSteps: {issue.repro_steps}"
+            doc = Document(page_content=text, metadata={**issue.model_dump(),  # ✅ All fields including 'id'
+                                                        "original_id": issue.id  # ✅ Explicit!
+                                                        })
+            docs.append(doc)
+            added_count += 1
 
-        # Update uploads history
-        upload_event = UploadEvent(
-            timestamp_utc=now_utc, file_name=file_name, issues_added=issues_added)
+        if docs:
+            vectorstore = Qdrant(
+                client=self.client,
+                collection_name=self.default_collection,
+                embeddings=self.embeddings
+            )
+            vectorstore.add_documents(docs)
+            logger.info(f"Added {len(docs)} to {self.default_collection}")
 
-        history = []
-        if os.path.exists(VECTOR_STORE_UPLOADS_PATH):
-            try:
-                with open(VECTOR_STORE_UPLOADS_PATH, 'r') as f:
-                    history = json.load(f)
-            except:
-                pass
+        return added_count
 
-        history.append(upload_event.model_dump())
-        with open(VECTOR_STORE_UPLOADS_PATH, 'w') as f:
-            json.dump(history, f, indent=2)
+    # def search(self, query_text: str, top_k: int = 5, collection_name: str = None) -> List[CandidateMatch]:
+    #     coll = collection_name or self.default_collection
+    #     if not coll or not self.collection_exists(coll):
+    #         return []
 
-    def reset_store(self):
-        if os.path.exists(FAISS_INDEX_PATH):
-            shutil.rmtree(FAISS_INDEX_PATH)
-        if os.path.exists(VECTOR_STORE_STATUS_PATH):
-            os.remove(VECTOR_STORE_STATUS_PATH)
-        if os.path.exists(VECTOR_STORE_UPLOADS_PATH):
-            os.remove(VECTOR_STORE_UPLOADS_PATH)
+    #     query_vector = self.embeddings.embed_query(query_text)  # ✅ 3072 dims
 
-        self._create_empty_index()
+    #     # ✅ NATIVE Qdrant (perfect!)
+    #     response = self.client.query_points(
+    #         collection_name=coll,
+    #         query=query_vector,
+    #         limit=top_k
+    #     )
+
+    #     candidates = []
+    #     for point in response.points:
+    #         meta = point.payload
+    #         candidates.append(CandidateMatch(
+    #             id=meta.get('original_id', meta.get('id', str(point.id))),
+    #             title=meta.get('title', ''),
+    #             module=meta.get('module'),
+    #             repro_steps=meta.get('repro_steps', ''),
+    #             score_pct=round(point.score * 100, 2)  # ✅ 0-100%
+    #         ))
+
+    #     print(f"🔍 Point ID: {point.id}, Payload keys: {list(meta.keys())}")
+    #     print(
+    #         f"  title: '{meta.get('title')}', repro: '{meta.get('repro_steps', '')[:50]}'")
+
+    #     return candidates
+    def search(self, query_text: str, top_k: int = 5, collection_name: str = None) -> List[CandidateMatch]:
+        """
+        Native Qdrant search with full metadata extraction.
+        """
+        coll = collection_name or self.default_collection
+        if not coll or not self.collection_exists(coll):
+            logger.warning(f"Empty collection: {coll}")
+            return []
+
+        logger.info(f"🔍 Searching '{coll}' for: {query_text[:100]}...")
+
+        # Generate query embedding
+        query_vector = self.embeddings.embed_query(query_text)
+
+        # Native Qdrant query_points
+        response = self.client.query_points(
+            collection_name=coll,
+            query=query_vector,
+            limit=top_k
+        )
+
+        candidates = []
+        for point in response.points:
+            payload = point.payload
+
+            # ✅ Handle BOTH LangChain nested AND flat metadata
+            if isinstance(payload, dict) and 'metadata' in payload:
+                # LangChain: {"page_content":..., "metadata":{...}}
+                meta = payload['metadata']
+            else:
+                meta = payload  # Flat payload
+
+            # ✅ Extract fields with fallbacks
+            candidate = CandidateMatch(
+                id=meta.get('original_id') or meta.get('id') or str(point.id),
+                title=meta.get('title', '') or '',
+                module=meta.get('module', None),
+                repro_steps=meta.get('repro_steps', '') or '',
+                score_pct=round(float(point.score) * 100, 2)
+            )
+
+            candidates.append(candidate)
+
+            # Debug log
+            logger.debug(
+                f"  Match: {candidate.id} ({candidate.score_pct}%) '{candidate.title[:50]}...'")
+
+        logger.info(f"✅ Found {len(candidates)} matches in {coll}")
+        return candidates
+
+    def get_status(self) -> VectorStoreStatus:
+        """Legacy support"""
+        return self.get_collection_status()
+
+    def list_collections(self) -> List[Dict[str, Any]]:
+        try:
+            # uses QdrantClient.get_collections()[web:20][web:17]
+            collections = self.client.get_collections().collections
+            return [
+                {
+                    "name": c.name,
+                    "vectors_count": getattr(c, "vectors_count", None),
+                    "status": getattr(c, "status", None),
+                }
+                for c in collections
+            ]
+        except Exception as e:
+            logger.error(f"Error listing collections: {e}")
+            return []
