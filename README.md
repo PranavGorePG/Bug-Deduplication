@@ -4,17 +4,17 @@ A production-ready web application for deduplicating bug reports using Retrieval
 
 ## Features
 
-- **Vector Store**: Persistent FAISS index for storing existing issues.
+- **Vector Store**: Qdrant collections for storing existing issues.
 - **In-Sheet Deduplication**: Detects duplicates within the uploaded new issues file.
 - **Cross-Store Deduplication**: Detects duplicates between new issues and the existing vector store.
-- **LLM Judge**: Uses Google Gemini 2.5 Flash Lite to confirm "Similar" matches with high accuracy.
+- **LLM Judge**: Uses bytez (Schematron 3b) to confirm "Similar" matches with high accuracy.
 - **Reporting**: Generates an Excel report with deduplication results, matching IDs, and confidence levels.
 
 ## Tech Stack
 
 - **Backend**: FastAPI
 - **Frontend**: Streamlit
-- **AI/ML**: LangChain, FAISS, Google Gemini (Embeddings & Chat)
+- **AI/ML**: LangChain, Qdrant, Google Gemini (Embeddings), Schematron 3b - Chat
 - **Data**: Pandas, OpenPyXL
 
 ## Setup
