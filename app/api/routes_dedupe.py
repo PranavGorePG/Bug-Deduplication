@@ -1,3 +1,5 @@
+import asyncio
+from contextlib import asynccontextmanager
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from app.services.vector_store_service import VectorStoreService
@@ -8,6 +10,8 @@ from typing import List
 import pandas as pd
 from io import BytesIO
 from app.core.logging import logger
+
+process_json_lock = asyncio.Lock()
 
 router = APIRouter(tags=["Deduplication"])
 # vector_store_service = VectorStoreService()
@@ -113,52 +117,41 @@ async def process_excel(
 
 @router.post("/process-json", response_model=List[RowDecision])
 async def process_json(request: ProcessRequest):
-    """Process JSON bugs against product collection"""
-    product_name = request.product_name
-    bug_reports = request.bug_reports
+    async with process_json_lock:
+        logger.info("🔒 Lock acquired - processing JSON request")
 
-    try:
-        # Set collection + validate
+        product_name = request.product_name
         vector_store_service.set_collection(product_name)
         status = vector_store_service.get_collection_status(
             vector_store_service.default_collection)
-
         if not status.index_built or status.total_issues == 0:
             raise HTTPException(
-                status_code=400,
-                detail=f"Collection '{product_name}' empty. Upload reference bugs first."
-            )
+                status_code=400, detail=f"Collection '{product_name}' empty. Upload reference bugs first.")
 
-        # Prepare rows with product
-        rows = []
-        input_ids = []
-        for i, report in enumerate(bug_reports):
-            row = {
-                "Title": report.title,
-                "Repro Steps": report.repro_steps,
-                "Module": getattr(report, 'module', None) or "",
-                "product": product_name  # ✅ For BugAnalyzer
-            }
-            rows.append(row)
-            input_ids.append(str(getattr(report, 'id', i)))
+        try:
+            rows = []
+            input_ids = []
+            for i, report in enumerate(request.bug_reports):
+                row = {
+                    "Title": report.title,
+                    "Repro Steps": report.repro_steps,
+                    "Module": getattr(report, 'module', '') or '',
+                    "product": product_name
+                }
+                rows.append(row)
+                input_ids.append(str(getattr(report, 'id', i)))
 
-        logger.info(f"Processing {len(rows)} JSON bugs for {product_name}")
-        print(f"Processing {len(rows)} JSON bugs for {product_name}")
+            logger.info(f"Processing {len(rows)} JSON bugs for {product_name}")
+            decisions = bug_analyzer.analyze_sheet(
+                rows, input_ids=input_ids, collection_name=product_name)
 
-        # Analyze
-        decisions = bug_analyzer.analyze_sheet(
-            rows, input_ids=input_ids, collection_name=product_name)
+            logger.info(
+                f"✅ JSON processing finished for {product_name} - releasing lock")
+            return decisions
 
-        logger.info(
-            f"✅ Analysis complete for {product_name}: {len(decisions)} decisions")
-        print(
-            f"✅ Analysis complete for {product_name}: {len(decisions)} decisions")
-
-        return decisions
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"JSON process error: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Analysis failed: {str(e)}")
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"JSON process error: {e}")
+            raise HTTPException(
+                status_code=500, detail=f"Analysis failed: {str(e)}")

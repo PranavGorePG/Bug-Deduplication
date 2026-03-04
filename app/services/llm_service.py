@@ -10,7 +10,7 @@ from typing import List
 
 
 class RateLimitedEmbeddings(Embeddings):
-    def __init__(self, underlying_embeddings: Embeddings, delay: float = 0.7, batch_size: int = 10):
+    def __init__(self, underlying_embeddings: Embeddings, delay: float = 1, batch_size: int = 10):
         self.underlying = underlying_embeddings
         self.delay = delay
         self.batch_size = batch_size

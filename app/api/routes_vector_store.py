@@ -44,43 +44,6 @@ async def get_collection_status(product_name: str):
     return vector_store_service.get_collection_status(product_name)
 
 
-# @router.post("/append")
-# async def append_issues(
-#     file: UploadFile = File(...),
-#     product_name: str = Query(..., description="Product name for collection")
-# ):
-#     """Append Excel/CSV issues to product collection"""
-#     try:
-#         vector_store_service.set_collection(product_name)
-
-#         # Read file
-#         contents = await file.read()
-#         file.file.seek(0)
-
-#         # Parse issues + set product
-#         issues = issues_repository.parse_file(file.file, file.filename)
-#         for issue in issues:
-#             issue.product = product_name
-
-#         # Append
-#         added_count = vector_store_service.append_issues(issues)
-#         status = vector_store_service.get_collection_status(
-#             vector_store_service.default_collection)
-
-#         return {
-#             "success": True,
-#             "product_name": product_name,
-#             "file_name": file.filename,
-#             "issues_added": added_count,
-#             "status": status
-#         }
-#     except ValueError as e:
-#         raise HTTPException(status_code=400, detail=str(e))
-#     except Exception as e:
-#         logger.error(f"Append issues error: {e}")
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
 @router.post("/append")
 async def append_issues(
     file: UploadFile = File(...),
@@ -191,3 +154,20 @@ async def list_collections():
         logger.error(f"List collections error: {e}")
         raise HTTPException(
             status_code=500, detail="Failed to list collections")
+
+
+@router.post("/collection/{product_name}/clear")
+async def clear_collection(product_name: str):
+    """
+    Clear all vectors/data from a collection without deleting the collection itself.
+    """
+    try:
+        cleared_count = vector_store_service.clear_collection(product_name)
+        return {
+            "success": True,
+            "collection": product_name,
+            "points_deleted": cleared_count
+        }
+    except Exception as e:
+        logger.error(f"Clear collection error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
