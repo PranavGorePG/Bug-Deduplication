@@ -2,7 +2,7 @@ import os
 from typing import List, Optional, Dict, Any
 from datetime import datetime, timezone
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import Distance, VectorParams
+from qdrant_client.http.models import Distance, VectorParams, FilterSelector, Filter
 from langchain_qdrant import Qdrant
 from langchain_core.documents import Document
 from app.core.config import settings
@@ -120,36 +120,6 @@ class VectorStoreService:
 
         return added_count
 
-    # def search(self, query_text: str, top_k: int = 5, collection_name: str = None) -> List[CandidateMatch]:
-    #     coll = collection_name or self.default_collection
-    #     if not coll or not self.collection_exists(coll):
-    #         return []
-
-    #     query_vector = self.embeddings.embed_query(query_text)  # ✅ 3072 dims
-
-    #     # ✅ NATIVE Qdrant (perfect!)
-    #     response = self.client.query_points(
-    #         collection_name=coll,
-    #         query=query_vector,
-    #         limit=top_k
-    #     )
-
-    #     candidates = []
-    #     for point in response.points:
-    #         meta = point.payload
-    #         candidates.append(CandidateMatch(
-    #             id=meta.get('original_id', meta.get('id', str(point.id))),
-    #             title=meta.get('title', ''),
-    #             module=meta.get('module'),
-    #             repro_steps=meta.get('repro_steps', ''),
-    #             score_pct=round(point.score * 100, 2)  # ✅ 0-100%
-    #         ))
-
-    #     print(f"🔍 Point ID: {point.id}, Payload keys: {list(meta.keys())}")
-    #     print(
-    #         f"  title: '{meta.get('title')}', repro: '{meta.get('repro_steps', '')[:50]}'")
-
-    #     return candidates
     def search(self, query_text: str, top_k: int = 5, collection_name: str = None) -> List[CandidateMatch]:
         """
         Native Qdrant search with full metadata extraction.
@@ -219,3 +189,20 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"Error listing collections: {e}")
             return []
+
+    def clear_collection(self, product_name: str) -> int:
+        """Delete all points from a collection without deleting the collection itself."""
+
+        collection_name = self.normalize_collection_name(product_name)
+        if not self.collection_exists(collection_name):
+            raise ValueError(f"Collection '{collection_name}' does not exist")
+        # Count before clearing
+        count_before = self.client.count(collection_name=collection_name).count
+        # Delete all points using an empty filter (matches everything)
+        self.client.delete(
+            collection_name=collection_name,
+            points_selector=FilterSelector(filter=Filter())
+        )
+        logger.info(
+            f"🧹 Cleared {count_before} points from '{collection_name}'")
+        return count_before
